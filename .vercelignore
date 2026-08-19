@@ -1,0 +1,17 @@
+node_modules
+package-lock.json
+.next
+.git
+.vercel
+coverage
+playwright-report
+test-results
+tsconfig.*-check.json
+qa-results*
+qa-visual-*
+e2e
+src/tests
+playwright.config.ts
+vitest.config.*
+supabase*.sql
+*.log

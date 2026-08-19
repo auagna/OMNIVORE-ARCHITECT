@@ -1,0 +1,14 @@
+node_modules
+package-lock.json
+.next
+.vercel
+out
+coverage
+playwright-report
+test-results
+tsconfig.*-check.json
+qa-results*
+qa-visual-*
+.env*.local
+!.env.example
+*.log

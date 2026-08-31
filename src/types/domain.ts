@@ -46,6 +46,11 @@ export interface User {
   createdAt: ISODateTime;
 }
 
+export interface AdminMemberRegistration {
+  user: User;
+  participatingSeasons: string[];
+}
+
 export type MemberDirectoryEntry = Pick<
   User,
   "id" | "name" | "imageUrl" | "occupation" | "bio" | "interests"
@@ -276,6 +281,7 @@ export interface ProgramMessage {
   content: string;
   parentId: string | null;
   isPinned: boolean;
+  isHidden: boolean;
   createdAt: ISODateTime;
   editedAt: ISODateTime | null;
 }

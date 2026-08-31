@@ -388,7 +388,10 @@ describe("BrowserMockRepository core flows", () => {
 
   it("returns a redacted PEOPLE query without payment fields", async () => {
     const repo = repository();
-    const people = await repo.listConfirmedParticipantUsers(MOCK_PROGRAM_IDS.workshop);
+    const people = await repo.listConfirmedParticipantUsers(
+      MOCK_PROGRAM_IDS.workshop,
+      "user-host-workshop",
+    );
 
     expect(people.length).toBeGreaterThan(0);
     expect(people[0]).not.toHaveProperty("paymentStatus");

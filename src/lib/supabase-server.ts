@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import type { Database } from "@/types/database";
 
 import {
   readRuntimeEnvironment,
@@ -11,11 +12,11 @@ import {
 /** Creates a request-scoped client for Server Components, Actions, and routes. */
 export async function createSupabaseServerClient(
   environment: RuntimeEnvironment = readRuntimeEnvironment(),
-): Promise<SupabaseClient> {
+): Promise<SupabaseClient<Database>> {
   const config = resolveSupabasePublicConfig(environment);
   const cookieStore = await cookies();
 
-  return createServerClient(config.url, config.key, {
+  return createServerClient<Database>(config.url, config.key, {
     cookies: {
       getAll() {
         return cookieStore.getAll();

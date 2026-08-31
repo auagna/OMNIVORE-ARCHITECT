@@ -1,4 +1,5 @@
 import type {
+  AdminMemberRegistration,
   ApprovalStatus,
   CalendarScope,
   CreateGatheringInput,
@@ -30,9 +31,15 @@ import type {
   UpdatePageContentInput,
   User,
 } from "../../types";
+import type {
+  MessageReactionChangeListener,
+  MessageReactionEmoji,
+  MessageReactionSnapshot,
+  MessageReaction,
+} from "../../features/conversation/reactions";
 
 export interface MockRepositoryState {
-  schemaVersion: 4;
+  schemaVersion: 5;
   revision: number;
   users: User[];
   programs: Program[];
@@ -43,6 +50,8 @@ export interface MockRepositoryState {
   recordMaterials: RecordMaterial[];
   activities: ProgramActivity[];
   messages: ProgramMessage[];
+  messageReactions: MessageReaction[];
+  participatingSeasonsByUserId: Record<string, string[]>;
   pageContents: PageContent[];
 }
 
@@ -232,13 +241,28 @@ export interface ConversationRepository {
    * invalidate repository reads, which are then authorized and refetched
    * through the normal RLS-protected query path.
    */
-  watchProgramMessages(programId: string): () => void;
+  watchProgramMessages(
+    programId: string,
+    onReactionChange?: MessageReactionChangeListener,
+  ): () => void;
   postProgramMessage(
     programId: string,
     input: CreateProgramMessageInput,
     authorId: string,
     now?: ISODateTime,
   ): Promise<ProgramMessage>;
+  listProgramMessageReactions(
+    programId: string,
+    viewerId: string,
+    messageIds?: readonly string[],
+  ): Promise<MessageReactionSnapshot[]>;
+  toggleProgramMessageReaction(
+    programId: string,
+    messageId: string,
+    emoji: MessageReactionEmoji,
+    actorId: string,
+    now?: ISODateTime,
+  ): Promise<MessageReactionSnapshot | null>;
 }
 
 export interface UserRepository {
@@ -247,7 +271,25 @@ export interface UserRepository {
   listMemberDirectory(): Promise<MemberDirectoryEntry[]>;
   listConfirmedParticipantUsers(
     programId: string,
+    viewerId: string,
   ): Promise<MemberDirectoryEntry[]>;
+}
+
+export interface AdminRepository {
+  listAdminPrograms(
+    viewerId: string,
+    now?: ISODateTime,
+  ): Promise<ProgramSnapshot[]>;
+  listAdminMessages(viewerId: string): Promise<ProgramMessage[]>;
+  listAdminMemberRegistrations(
+    viewerId: string,
+  ): Promise<AdminMemberRegistration[]>;
+  approvePendingMember(
+    userId: string,
+    adminId: string,
+    now?: ISODateTime,
+  ): Promise<AdminMemberRegistration>;
+  listAdminRecords(viewerId: string): Promise<ProgramRecord[]>;
 }
 
 export interface OARepository
@@ -258,6 +300,7 @@ export interface OARepository
     ActivityRepository,
     ConversationRepository,
     UserRepository,
+    AdminRepository,
     PageContentRepository,
     RepositoryRuntime {}
 

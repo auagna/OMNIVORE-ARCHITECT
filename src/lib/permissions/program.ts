@@ -114,6 +114,12 @@ export function canWriteProgramMessage(
   return capabilities.canWriteChat;
 }
 
+export function canReactToProgramMessage(
+  context: ProgramPermissionContext,
+): boolean {
+  return capabilitiesFor(context).canReactToMessage;
+}
+
 export function canViewParticipantPayment(
   user: User | null,
   program: Program,

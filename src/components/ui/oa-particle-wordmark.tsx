@@ -297,7 +297,7 @@ export function OAParticleWordmark({ className }: { className?: string }) {
       ref={rootRef}
     >
       <span aria-hidden="true" className="oa-particle-wordmark__text">
-        <span className="oa-particle-wordmark__line" data-oa-wordmark-line>OMNIVORE_</span>
+        <span className="oa-particle-wordmark__line" data-oa-wordmark-line>OMNIVORE</span>
         <span className="oa-particle-wordmark__line" data-oa-wordmark-line>ARCHITECT</span>
       </span>
       <canvas aria-hidden="true" className="oa-particle-wordmark__canvas" ref={canvasRef} />

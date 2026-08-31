@@ -13,7 +13,14 @@ import {
   selectMyUpcoming,
   selectPrograms,
 } from "../features/programs/model";
+import {
+  isMessageReactionEmoji,
+  type MessageReactionChangeListener,
+  type MessageReactionEmoji,
+  type MessageReactionSnapshot,
+} from "../features/conversation/reactions";
 import type {
+  AdminMemberRegistration,
   ApprovalStatus,
   ActivityMetadataValue,
   CalendarScope,
@@ -49,6 +56,7 @@ import type {
   User,
 } from "../types";
 import type {
+  AdminMemberRegistrationRow,
   Database,
   GatheringDetailRow,
   GatheringPaymentInstructionRow,
@@ -58,6 +66,7 @@ import type {
   ProgramActivityRow,
   ProgramApprovalRow,
   ProgramMessageRow,
+  MessageReactionReadRow,
   ProgramRevisionRow,
   ProgramRow,
   ReadingDetailRow,
@@ -79,8 +88,10 @@ import {
 type Listener = () => void;
 
 interface TalkSubscription {
-  channel: RealtimeChannel;
+  channel: RealtimeChannel | null;
   references: number;
+  reactionListeners: Set<MessageReactionChangeListener>;
+  cancelled: boolean;
 }
 
 export type SupabaseRepositoryFailureCode =
@@ -171,10 +182,9 @@ function mapCostFromRow(
     type: "HOST_COLLECT",
     participationFee: row.participation_fee ?? 0,
     feeIncludes: row.fee_includes,
-    // RLS deliberately withholds account text from non-participants. The
-    // neutral copy is presentation-safe and cannot be mistaken for bank data.
-    paymentInfo:
-      paymentInstruction?.payment_info ?? "참여 확정 후 납부 정보를 확인할 수 있습니다.",
+    // Persisted/read data stays distinct from presentation copy. RLS can
+    // deliberately withhold this value from an otherwise visible Program.
+    paymentInfo: paymentInstruction?.payment_info ?? null,
     paymentDeadline: row.payment_deadline,
     cancellationPolicy: row.cancellation_policy,
   };
@@ -275,6 +285,15 @@ function mapUserRow(row: UserRow): User {
   };
 }
 
+function mapAdminMemberRegistrationRow(
+  row: AdminMemberRegistrationRow,
+): AdminMemberRegistration {
+  return {
+    user: mapUserRow(row),
+    participatingSeasons: [...row.participating_seasons],
+  };
+}
+
 function mapParticipationRow(row: ParticipationRow): Participation {
   return {
     id: row.id,
@@ -341,9 +360,48 @@ function mapMessageRow(row: ProgramMessageRow): ProgramMessage {
     content: row.content,
     parentId: row.parent_id,
     isPinned: row.is_pinned,
+    isHidden: row.is_hidden,
     createdAt: row.created_at,
     editedAt: row.edited_at,
   };
+}
+
+function mapMessageReactionRow(
+  row: MessageReactionReadRow,
+): MessageReactionSnapshot {
+  if (!isMessageReactionEmoji(row.emoji)) {
+    throw new SupabaseRepositoryError(
+      "INVALID_SERVER_DATA",
+      "mapMessageReactionRow",
+      "Supabase returned an unsupported reaction emoji.",
+    );
+  }
+  return {
+    id: row.id,
+    programId: row.program_id,
+    messageId: row.message_id,
+    userId: row.user_id,
+    emoji: row.emoji,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    user: {
+      id: row.user_id,
+      name: row.user_name,
+      imageUrl: null,
+      seasons: [...row.participating_seasons],
+    },
+  };
+}
+
+function findReactionMessageId(value: unknown, depth = 0): string | null {
+  if (depth > 4 || typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.message_id === "string") return record.message_id;
+  for (const key of ["payload", "record", "old_record", "new", "old"]) {
+    const nested = findReactionMessageId(record[key], depth + 1);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function mapPageContentRow(row: PageContentRow): PageContent {
@@ -1325,6 +1383,7 @@ export class SupabaseOARepository implements OARepository {
       .from("program_messages")
       .select("*")
       .eq("program_id", programId)
+      .eq("is_hidden", false)
       .order("created_at", { ascending: true });
     if (response.error) throwRepositoryFailure("listProgramMessages", response.error);
     return response.data.map(mapMessageRow).sort((left, right) => {
@@ -1334,31 +1393,38 @@ export class SupabaseOARepository implements OARepository {
     });
   }
 
-  watchProgramMessages(programId: string): () => void {
+  watchProgramMessages(
+    programId: string,
+    onReactionChange?: MessageReactionChangeListener,
+  ): () => void {
     if (typeof window === "undefined") return () => undefined;
 
     const existing = this.talkSubscriptions.get(programId);
     if (existing) {
       existing.references += 1;
-      return this.releaseTalkSubscription(programId, existing);
+      if (onReactionChange) existing.reactionListeners.add(onReactionChange);
+      return this.releaseTalkSubscription(
+        programId,
+        existing,
+        onReactionChange,
+      );
     }
 
-    const channel = this.client
-      .channel(`oa-program-talk:${programId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "program_messages",
-          filter: `program_id=eq.${programId}`,
-        },
-        () => this.invalidate(),
-      )
-      .subscribe();
-    const subscription = { channel, references: 1 };
+    const subscription: TalkSubscription = {
+      channel: null,
+      references: 1,
+      reactionListeners: new Set(
+        onReactionChange ? [onReactionChange] : [],
+      ),
+      cancelled: false,
+    };
     this.talkSubscriptions.set(programId, subscription);
-    return this.releaseTalkSubscription(programId, subscription);
+    void this.startTalkSubscription(programId, subscription);
+    return this.releaseTalkSubscription(
+      programId,
+      subscription,
+      onReactionChange,
+    );
   }
 
   async postProgramMessage(
@@ -1385,6 +1451,142 @@ export class SupabaseOARepository implements OARepository {
     if (response.error) throwRepositoryFailure("postProgramMessage", response.error);
     this.invalidate();
     return mapMessageRow(response.data);
+  }
+
+  async listProgramMessageReactions(
+    programId: string,
+    viewerId: string,
+    messageIds?: readonly string[],
+  ): Promise<MessageReactionSnapshot[]> {
+    void viewerId;
+    const response = await this.client.rpc("list_program_message_reactions", {
+      p_program_id: programId,
+      p_message_ids: messageIds ? [...messageIds] : null,
+    });
+    if (response.error) {
+      throwRepositoryFailure("list_program_message_reactions", response.error);
+    }
+    return response.data.map(mapMessageReactionRow);
+  }
+
+  async toggleProgramMessageReaction(
+    programId: string,
+    messageId: string,
+    emoji: MessageReactionEmoji,
+    actorId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<MessageReactionSnapshot | null> {
+    void actorId;
+    void now;
+    if (!isMessageReactionEmoji(emoji)) {
+      throw new RepositoryError("VALIDATION", "허용되지 않은 반응입니다.");
+    }
+    const response = await fetch(
+      `/api/programs/${encodeURIComponent(programId)}/messages/${encodeURIComponent(messageId)}/reactions`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      },
+    );
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: string; reaction?: MessageReactionReadRow | null }
+      | null;
+    if (!response.ok) {
+      const message = payload?.error ?? "반응을 저장하지 못했습니다.";
+      if (response.status === 401) {
+        throw new RepositoryError("UNAUTHORIZED", message);
+      }
+      if (response.status === 403) {
+        throw new RepositoryError("FORBIDDEN", message);
+      }
+      if (response.status === 404) {
+        throw new RepositoryError("NOT_FOUND", message);
+      }
+      if (response.status === 400 || response.status === 422) {
+        throw new RepositoryError("VALIDATION", message);
+      }
+      throw new SupabaseRepositoryError(
+        "QUERY_FAILED",
+        "toggleProgramMessageReaction",
+        message,
+        String(response.status),
+      );
+    }
+    return payload?.reaction ? mapMessageReactionRow(payload.reaction) : null;
+  }
+
+  async listAdminPrograms(
+    viewerId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<ProgramSnapshot[]> {
+    void viewerId;
+    const model = await this.loadAdminVisibleModel();
+    return model.programs.map((program) =>
+      buildProgramSnapshot(
+        program,
+        model.users,
+        model.participations,
+        model.records,
+        now,
+      ),
+    );
+  }
+
+  async listAdminMessages(viewerId: string): Promise<ProgramMessage[]> {
+    void viewerId;
+    await this.assertAdmin();
+    const response = await this.client
+      .from("program_messages")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (response.error) throwRepositoryFailure("listAdminMessages", response.error);
+    return response.data.map(mapMessageRow);
+  }
+
+  async listAdminMemberRegistrations(
+    viewerId: string,
+  ): Promise<AdminMemberRegistration[]> {
+    void viewerId;
+    await this.assertAdmin();
+    const response = await this.client.rpc("list_admin_member_registrations");
+    if (response.error) {
+      throwRepositoryFailure("list_admin_member_registrations", response.error);
+    }
+    return response.data.map(mapAdminMemberRegistrationRow);
+  }
+
+  async approvePendingMember(
+    userId: string,
+    adminId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<AdminMemberRegistration> {
+    void adminId;
+    void now;
+    await this.assertAdmin();
+    const response = await this.client.rpc("approve_pending_member", {
+      p_user_id: userId,
+    });
+    if (response.error) {
+      throwRepositoryFailure("approve_pending_member", response.error);
+    }
+    const row = response.data[0];
+    if (!row) {
+      throw new SupabaseRepositoryError(
+        "INVALID_SERVER_DATA",
+        "approve_pending_member",
+        "Supabase did not return the approved member registration.",
+      );
+    }
+    this.invalidate();
+    return mapAdminMemberRegistrationRow(row);
+  }
+
+  async listAdminRecords(viewerId: string): Promise<ProgramRecord[]> {
+    void viewerId;
+    await this.assertAdmin();
+    const { records } = await this.loadRecords();
+    return records;
   }
 
   async getUserById(userId: string): Promise<User | null> {
@@ -1423,7 +1625,9 @@ export class SupabaseOARepository implements OARepository {
 
   async listConfirmedParticipantUsers(
     programId: string,
+    viewerId: string,
   ): Promise<MemberDirectoryEntry[]> {
+    void viewerId;
     const response = await this.client.rpc("list_program_confirmed_people", {
       p_program_id: programId,
     });
@@ -1446,6 +1650,16 @@ export class SupabaseOARepository implements OARepository {
       throw new RepositoryError("UNAUTHORIZED", "로그인이 필요합니다.");
     }
     return response.data.user.id;
+  }
+
+  private async assertAdmin(): Promise<string> {
+    const actorId = await this.currentUserId();
+    const response = await this.client.rpc("is_oa_admin");
+    if (response.error) throwRepositoryFailure("is_oa_admin", response.error);
+    if (!response.data) {
+      throw new RepositoryError("FORBIDDEN", "운영진 권한이 필요합니다.");
+    }
+    return actorId;
   }
 
   private async loadPrograms(programIds?: readonly string[]): Promise<Program[]> {
@@ -1560,6 +1774,53 @@ export class SupabaseOARepository implements OARepository {
       participations: participationsResponse.data.map(mapParticipationRow),
       records: recordModel.records,
       participantCounts: new Map(countEntries),
+    };
+  }
+
+  /**
+   * Admin inventory uses one batched query per relation. In particular, it
+   * avoids the public read model's per-Program host/count RPCs and keeps DRAFT
+   * Programs in the result; RLS still remains the final authorization layer.
+   */
+  private async loadAdminVisibleModel(): Promise<VisibleModel> {
+    await this.assertAdmin();
+    const programs = await this.loadPrograms();
+    const ids = programs.map((program) => program.id);
+    if (ids.length === 0) {
+      return {
+        programs,
+        users: [],
+        participations: [],
+        records: [],
+        participantCounts: new Map(),
+      };
+    }
+
+    const hostIds = [...new Set(programs.map((program) => program.hostId))];
+    const [hostResponse, participationsResponse, recordModel] = await Promise.all([
+      this.client
+        .from("users")
+        .select("id, name, image_media_id, occupation, bio, interests")
+        .in("id", hostIds),
+      this.client.from("participations").select("*").in("program_id", ids),
+      this.loadRecords(ids),
+    ]);
+    if (hostResponse.error) {
+      throwRepositoryFailure("loadAdminProgramHosts", hostResponse.error);
+    }
+    if (participationsResponse.error) {
+      throwRepositoryFailure(
+        "loadAdminProgramParticipations",
+        participationsResponse.error,
+      );
+    }
+
+    return {
+      programs,
+      users: hostResponse.data.map((row) => mapSafeMemberRow(row)),
+      participations: participationsResponse.data.map(mapParticipationRow),
+      records: recordModel.records,
+      participantCounts: new Map(),
     };
   }
 
@@ -1686,20 +1947,72 @@ export class SupabaseOARepository implements OARepository {
   private releaseTalkSubscription(
     programId: string,
     subscription: TalkSubscription,
+    onReactionChange?: MessageReactionChangeListener,
   ): () => void {
     let active = true;
     return () => {
       if (!active) return;
       active = false;
-
       const current = this.talkSubscriptions.get(programId);
       if (current !== subscription) return;
+      if (onReactionChange) current.reactionListeners.delete(onReactionChange);
       current.references -= 1;
       if (current.references > 0) return;
 
+      current.cancelled = true;
       this.talkSubscriptions.delete(programId);
-      void this.client.removeChannel(current.channel);
+      if (current.channel) void this.client.removeChannel(current.channel);
     };
+  }
+
+  private async startTalkSubscription(
+    programId: string,
+    subscription: TalkSubscription,
+  ): Promise<void> {
+    try {
+      await this.client.realtime.setAuth();
+    } catch {
+      return;
+    }
+    if (
+      subscription.cancelled ||
+      this.talkSubscriptions.get(programId) !== subscription
+    ) return;
+
+    const notifyReaction = (payload: unknown) => {
+      const messageId = findReactionMessageId(payload);
+      if (!messageId) {
+        this.invalidate();
+        return;
+      }
+      for (const listener of subscription.reactionListeners) listener(messageId);
+    };
+    const channel = this.client
+      .channel(`oa-program-talk:${programId}`, {
+        config: { private: true },
+      })
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "program_messages",
+          filter: `program_id=eq.${programId}`,
+        },
+        () => this.invalidate(),
+      )
+      .on("broadcast", { event: "INSERT" }, notifyReaction)
+      .on("broadcast", { event: "UPDATE" }, notifyReaction)
+      .on("broadcast", { event: "DELETE" }, notifyReaction)
+      .subscribe();
+    if (
+      subscription.cancelled ||
+      this.talkSubscriptions.get(programId) !== subscription
+    ) {
+      void this.client.removeChannel(channel);
+      return;
+    }
+    subscription.channel = channel;
   }
 
   private invalidate(): void {

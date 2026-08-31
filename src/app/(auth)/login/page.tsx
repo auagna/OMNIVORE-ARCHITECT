@@ -46,7 +46,7 @@ function MockLogin() {
     <main className="mx-auto grid min-h-screen w-full max-w-[760px] content-center px-5 py-16">
       <p className="mb-5 text-[length:var(--oa-type-meta)] font-bold tracking-[var(--oa-tracking-label)]">OA / MOCK AUTH</p>
       <h1 className="m-0 max-w-[10ch] text-[clamp(3.2rem,13vw,6.5rem)] font-semibold leading-[0.88] tracking-[-0.055em]">
-        OMNIVORE_<br />ARCHITECT
+        OMNIVORE<br />ARCHITECT
       </h1>
       <p className="mb-8 mt-10 max-w-[34rem] leading-relaxed text-[var(--oa-secondary)]">
         개발 환경에서는 MEMBER와 ADMIN의 업무 흐름을 재현하는 mock session을 사용합니다.
@@ -179,7 +179,7 @@ function ProductionAuth() {
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-[760px] content-center px-5 py-12 sm:py-16">
       <p className="mb-5 text-[length:var(--oa-type-meta)] font-bold tracking-[var(--oa-tracking-label)]">OA / AUTH</p>
-      <h1 className="m-0 max-w-[10ch] text-[clamp(3rem,12vw,6.25rem)] font-semibold leading-[0.88] tracking-[-0.05em]">OMNIVORE_<br />ARCHITECT</h1>
+      <h1 className="m-0 max-w-[10ch] text-[clamp(3rem,12vw,6.25rem)] font-semibold leading-[0.88] tracking-[-0.05em]">OMNIVORE<br />ARCHITECT</h1>
       <div className="mt-10 grid grid-cols-2 border-y border-[var(--oa-line)]" role="group" aria-label="인증 방식">
         <button type="button" className="min-h-12 border-r border-[var(--oa-line)] px-4 text-[length:var(--oa-type-label)] font-bold tracking-[var(--oa-tracking-label)] disabled:opacity-50" aria-pressed={view === "LOGIN"} disabled={pending} onClick={() => selectView("LOGIN")}>LOGIN</button>
         <button type="button" className="min-h-12 px-4 text-[length:var(--oa-type-label)] font-bold tracking-[var(--oa-tracking-label)] disabled:opacity-50" aria-pressed={view === "SIGN_UP"} disabled={pending} onClick={() => selectView("SIGN_UP")}>JOIN</button>

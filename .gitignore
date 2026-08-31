@@ -1,5 +1,4 @@
 node_modules
-package-lock.json
 .next
 .vercel
 out
@@ -7,8 +6,10 @@ coverage
 playwright-report
 test-results
 tsconfig.*-check.json
+*.tsbuildinfo
 qa-results*
 qa-visual-*
-.env*.local
+.env
+.env.*
 !.env.example
 *.log

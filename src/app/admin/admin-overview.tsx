@@ -4,29 +4,14 @@ import Link from "next/link";
 import { useCallback } from "react";
 import { useAppState, useRepositoryQuery } from "@/features/app-state/app-state-provider";
 import type { OARepository } from "@/lib/repositories";
+import { loadAdminOverview } from "./admin-data-adapter";
 import { AdminError, AdminLoading, AdminPageHeader } from "./admin-ui";
-
-interface OverviewData {
-  approvals: number;
-  pendingMembers: number;
-  recordRequired: number;
-}
 
 export function AdminOverview() {
   const { currentUserId } = useAppState();
-  const query = useCallback(async (repository: OARepository): Promise<OverviewData> => {
+  const query = useCallback((repository: OARepository) => {
     if (!currentUserId) throw new Error("관리자 로그인이 필요합니다.");
-    const now = new Date().toISOString();
-    const [approvals, users, programs] = await Promise.all([
-      repository.listApprovalQueue(currentUserId, ["PENDING"], now),
-      repository.listUsers(currentUserId),
-      repository.listPrograms(undefined, now),
-    ]);
-    return {
-      approvals: approvals.length,
-      pendingMembers: users.filter((user) => user.status === "PENDING").length,
-      recordRequired: programs.filter((program) => program.displayStatus === "RECORD_REQUIRED").length,
-    };
+    return loadAdminOverview(repository, currentUserId, new Date().toISOString());
   }, [currentUserId]);
   const { data, loading, error, reload } = useRepositoryQuery(query, [currentUserId]);
 
@@ -46,11 +31,11 @@ export function AdminOverview() {
             <strong>{String(data.approvals).padStart(2, "0")}</strong>
             <em>REVIEW →</em>
           </Link>
-          <div>
+          <Link href="/admin?view=conversations">
             <span>UNANSWERED</span>
-            <strong>—</strong>
-            <em>PROGRAM TALK</em>
-          </div>
+            <strong>{String(data.unansweredQuestions).padStart(2, "0")}</strong>
+            <em>OPEN TALK →</em>
+          </Link>
           <Link href="/admin?view=members">
             <span>PENDING MEMBERS</span>
             <strong>{String(data.pendingMembers).padStart(2, "0")}</strong>

@@ -221,7 +221,7 @@ describe("Program Activity and v3.1 Record repository", () => {
       MOCK_CURRENT_USER_ID,
       joinedAt,
     );
-    await repo.postProgramMessage(
+    const posted = await repo.postProgramMessage(
       MOCK_PROGRAM_IDS.exhibition,
       { type: "CHAT", content: "전시장에서 뵙겠습니다." },
       MOCK_CURRENT_USER_ID,
@@ -245,7 +245,9 @@ describe("Program Activity and v3.1 Record repository", () => {
         MOCK_PROGRAM_IDS.exhibition,
         MOCK_CURRENT_USER_ID,
       ),
-    ).resolves.toHaveLength(1);
+    ).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: posted.id })]),
+    );
     await expect(
       repo.postProgramMessage(
         MOCK_PROGRAM_IDS.exhibition,

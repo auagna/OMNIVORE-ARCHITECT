@@ -13,6 +13,7 @@ import type {
   TalkRegistrationType,
   UserStatus,
 } from "./domain";
+import type { MessageReactionEmoji } from "../features/conversation/constants/message-reactions";
 
 export type Json =
   | string
@@ -174,6 +175,7 @@ export interface ProgramMessageRow {
   content: string;
   parent_id: string | null;
   is_pinned: boolean;
+  is_hidden: boolean;
   created_at: string;
   edited_at: string | null;
 }
@@ -188,6 +190,22 @@ export interface ProgramMessageMentionRow {
   message_id: string;
   user_id: string;
   created_at: string;
+}
+
+export interface MessageReactionRow {
+  id: string;
+  program_id: string;
+  message_id: string;
+  user_id: string;
+  emoji: MessageReactionEmoji;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageReactionReadRow extends MessageReactionRow {
+  user_name: string;
+  image_media_id: string | null;
+  participating_seasons: string[];
 }
 
 export interface TagRow {
@@ -277,6 +295,11 @@ export interface SafeMemberRow {
 }
 
 export interface ActiveMemberDirectoryRow extends SafeMemberRow {
+  participating_seasons: string[];
+}
+
+/** Admin-only registration read model returned by hardened RPCs. */
+export interface AdminMemberRegistrationRow extends UserRow {
   participating_seasons: string[];
 }
 
@@ -372,6 +395,17 @@ export interface Database {
         InsertRow<ProgramMessageMentionRow, "message_id" | "user_id">,
         UpdateRow<ProgramMessageMentionRow, "message_id" | "user_id" | "created_at">
       >;
+      message_reactions: TableDefinition<
+        MessageReactionRow,
+        InsertRow<
+          MessageReactionRow,
+          "program_id" | "message_id" | "user_id" | "emoji"
+        >,
+        UpdateRow<
+          MessageReactionRow,
+          "id" | "program_id" | "message_id" | "user_id" | "created_at"
+        >
+      >;
       tags: TableDefinition<TagRow, InsertRow<TagRow, "name">, UpdateRow<TagRow, "id" | "created_at">>;
       program_tags: TableDefinition<
         ProgramTagRow,
@@ -418,6 +452,14 @@ export interface Database {
         Args: Record<string, never>;
         Returns: ActiveMemberDirectoryRow[];
       };
+      list_admin_member_registrations: {
+        Args: Record<string, never>;
+        Returns: AdminMemberRegistrationRow[];
+      };
+      approve_pending_member: {
+        Args: { p_user_id: string };
+        Returns: AdminMemberRegistrationRow[];
+      };
       get_program_host_profile: {
         Args: { p_program_id: string };
         Returns: SafeMemberRow[];
@@ -429,6 +471,14 @@ export interface Database {
       list_program_confirmed_people: {
         Args: { p_program_id: string };
         Returns: SafeMemberRow[];
+      };
+      list_program_message_reactions: {
+        Args: { p_program_id: string; p_message_ids?: string[] | null };
+        Returns: MessageReactionReadRow[];
+      };
+      toggle_message_reaction: {
+        Args: { p_message_id: string; p_emoji: string };
+        Returns: MessageReactionRow[];
       };
       list_program_host_participants: {
         Args: { p_program_id: string };

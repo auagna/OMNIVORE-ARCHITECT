@@ -1,5 +1,4 @@
 node_modules
-package-lock.json
 .next
 .git
 .vercel
@@ -14,4 +13,5 @@ src/tests
 playwright.config.ts
 vitest.config.*
 supabase*.sql
+supabase/
 *.log

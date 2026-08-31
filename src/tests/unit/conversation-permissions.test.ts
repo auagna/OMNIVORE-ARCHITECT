@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canAccessProgramTalk,
+  canReactToProgramMessage,
   canWriteProgramMessage,
 } from "@/lib/permissions";
 import type { Participation, Program, User } from "@/types";
@@ -104,6 +105,7 @@ describe("Program TALK authorization", () => {
     expect(canAccessProgramTalk(context)).toBe(true);
     expect(canWriteProgramMessage(context, "CHAT")).toBe(false);
     expect(canWriteProgramMessage(context, "QUESTION")).toBe(false);
+    expect(canReactToProgramMessage(context)).toBe(false);
   });
 
   it("allows a confirmed participant to read and write CHAT or QUESTION", () => {
@@ -117,6 +119,7 @@ describe("Program TALK authorization", () => {
     expect(canAccessProgramTalk(context)).toBe(true);
     expect(canWriteProgramMessage(context, "CHAT")).toBe(true);
     expect(canWriteProgramMessage(context, "QUESTION")).toBe(true);
+    expect(canReactToProgramMessage(context)).toBe(true);
   });
 
   it("allows the Host to access TALK and write NOTICE without a Participation", () => {
@@ -128,6 +131,7 @@ describe("Program TALK authorization", () => {
 
     expect(canAccessProgramTalk(context)).toBe(true);
     expect(canWriteProgramMessage(context, "NOTICE")).toBe(true);
+    expect(canReactToProgramMessage(context)).toBe(true);
   });
 
   it("does not allow a normal confirmed participant to write NOTICE", () => {
@@ -150,6 +154,7 @@ describe("Program TALK authorization", () => {
 
     expect(canAccessProgramTalk(context)).toBe(true);
     expect(canWriteProgramMessage(context, "NOTICE")).toBe(true);
+    expect(canReactToProgramMessage(context)).toBe(true);
   });
 
   it("denies a pending user even if a stale confirmed Participation exists", () => {
@@ -162,5 +167,18 @@ describe("Program TALK authorization", () => {
 
     expect(canAccessProgramTalk(context)).toBe(false);
     expect(canWriteProgramMessage(context, "CHAT")).toBe(false);
+    expect(canReactToProgramMessage(context)).toBe(false);
+  });
+
+  it("keeps cancelled Program reactions visible but read-only", () => {
+    const currentUser = user("member-confirmed");
+    const context = {
+      user: currentUser,
+      program: { ...gathering, status: "CANCELLED" } as Program,
+      participation: participation(currentUser.id, "CONFIRMED"),
+    };
+
+    expect(canAccessProgramTalk(context)).toBe(true);
+    expect(canReactToProgramMessage(context)).toBe(false);
   });
 });

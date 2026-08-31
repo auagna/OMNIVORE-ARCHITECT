@@ -368,6 +368,7 @@ export function mapProgramMessageRow(row: ProgramMessageRow): ProgramMessage {
     content: row.content,
     parentId: row.parent_id,
     isPinned: row.is_pinned,
+    isHidden: row.is_hidden,
     createdAt: row.created_at,
     editedAt: row.edited_at,
   };

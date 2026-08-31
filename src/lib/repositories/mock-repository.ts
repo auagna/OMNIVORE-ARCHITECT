@@ -1,6 +1,12 @@
 import { MOCK_REPOSITORY_STORAGE_KEY, MOCK_SCHEMA_VERSION } from "../../constants";
 import { validateCreateGatheringInput } from "../../features/gathering/model";
 import {
+  isMessageReactionEmoji,
+  type MessageReactionChangeListener,
+  type MessageReactionEmoji,
+  type MessageReactionSnapshot,
+} from "../../features/conversation/reactions";
+import {
   buildProgramSnapshot,
   classifyGatheringChanges,
   getProgramCapabilities,
@@ -15,6 +21,7 @@ import {
 } from "../../features/programs/model";
 import {
   canManageProgram,
+  canReactToProgramMessage,
   canPublishProgramDirectly,
   canReviewProgramApproval,
   canSubmitGatheringProposal,
@@ -25,6 +32,7 @@ import {
   isActiveUser,
 } from "../permissions";
 import type {
+  AdminMemberRegistration,
   ApprovalStatus,
   CalendarScope,
   CreateRecordInput,
@@ -106,6 +114,14 @@ function isMockState(value: unknown): value is MockRepositoryState {
     Array.isArray(candidate.recordMaterials) &&
     Array.isArray(candidate.activities) &&
     Array.isArray(candidate.messages) &&
+    Array.isArray(candidate.messageReactions) &&
+    typeof candidate.participatingSeasonsByUserId === "object" &&
+    candidate.participatingSeasonsByUserId !== null &&
+    !Array.isArray(candidate.participatingSeasonsByUserId) &&
+    Object.values(candidate.participatingSeasonsByUserId).every(
+      (seasons) =>
+        Array.isArray(seasons) && seasons.every((season) => typeof season === "string"),
+    ) &&
     Array.isArray(candidate.pageContents)
   );
 }
@@ -193,6 +209,17 @@ function capabilitiesForState(
     participantCounts: { confirmed },
     now,
   });
+}
+
+function requireAdmin(state: MockRepositoryState, userId: string): User {
+  const user = state.users.find((candidate) => candidate.id === userId) ?? null;
+  if (user?.status !== "ADMIN") {
+    throw new RepositoryError(
+      "FORBIDDEN",
+      "Admin만 이 운영 정보를 확인하거나 변경할 수 있습니다.",
+    );
+  }
+  return user;
 }
 
 function buildRecordMaterials(
@@ -360,6 +387,10 @@ export class BrowserMockRepository implements OARepository {
   private readonly initialState: MockRepositoryState;
   private readonly serverSnapshot: MockRepositoryState;
   private readonly listeners = new Set<Listener>();
+  private readonly reactionListeners = new Map<
+    string,
+    Set<MessageReactionChangeListener>
+  >();
   private state: MockRepositoryState;
 
   constructor(options: BrowserMockRepositoryOptions = {}) {
@@ -1673,7 +1704,9 @@ export class BrowserMockRepository implements OARepository {
 
     return clone(
       this.state.messages
-        .filter((message) => message.programId === programId)
+        .filter(
+          (message) => message.programId === programId && !message.isHidden,
+        )
         .sort((left, right) => {
           const leftPinned = left.type === "NOTICE" && left.isPinned ? 1 : 0;
           const rightPinned = right.type === "NOTICE" && right.isPinned ? 1 : 0;
@@ -1685,8 +1718,18 @@ export class BrowserMockRepository implements OARepository {
     );
   }
 
-  watchProgramMessages(): () => void {
-    return () => undefined;
+  watchProgramMessages(
+    programId: string,
+    onReactionChange?: MessageReactionChangeListener,
+  ): () => void {
+    if (!onReactionChange) return () => undefined;
+    const listeners = this.reactionListeners.get(programId) ?? new Set();
+    listeners.add(onReactionChange);
+    this.reactionListeners.set(programId, listeners);
+    return () => {
+      listeners.delete(onReactionChange);
+      if (listeners.size === 0) this.reactionListeners.delete(programId);
+    };
   }
 
   async postProgramMessage(
@@ -1778,6 +1821,7 @@ export class BrowserMockRepository implements OARepository {
       content,
       parentId,
       isPinned: input.type === "NOTICE" && Boolean(input.isPinned),
+      isHidden: false,
       createdAt: now,
       editedAt: null,
     };
@@ -1793,17 +1837,252 @@ export class BrowserMockRepository implements OARepository {
     return clone(message);
   }
 
+  async listProgramMessageReactions(
+    programId: string,
+    viewerId: string,
+    messageIds?: readonly string[],
+  ): Promise<MessageReactionSnapshot[]> {
+    const program = this.state.programs.find(
+      (candidate) => candidate.id === programId,
+    );
+    if (!program) {
+      throw new RepositoryError("NOT_FOUND", "프로그램을 찾을 수 없습니다.");
+    }
+    if (!capabilitiesForState(this.state, program, viewerId).canAccessTalk) {
+      throw new RepositoryError(
+        "FORBIDDEN",
+        "이 Program TALK의 반응을 읽을 권한이 없습니다.",
+      );
+    }
+    const messageFilter = messageIds ? new Set(messageIds) : null;
+    const visibleMessageIds = new Set(
+      this.state.messages
+        .filter(
+          (message) => message.programId === programId && !message.isHidden,
+        )
+        .map((message) => message.id),
+    );
+    return clone(
+      this.state.messageReactions
+        .filter(
+          (reaction) =>
+            reaction.programId === programId &&
+            visibleMessageIds.has(reaction.messageId) &&
+            (!messageFilter || messageFilter.has(reaction.messageId)),
+        )
+        .map((reaction) => {
+          const user = this.state.users.find(
+            (candidate) => candidate.id === reaction.userId,
+          );
+          if (!user) {
+            throw new RepositoryError(
+              "NOT_FOUND",
+              "반응을 남긴 Member를 찾을 수 없습니다.",
+            );
+          }
+          return {
+            ...reaction,
+            user: {
+              id: user.id,
+              name: user.name,
+              imageUrl: user.imageUrl,
+              seasons: [
+                ...(this.state.participatingSeasonsByUserId[user.id] ?? []),
+              ],
+            },
+          };
+        }),
+    );
+  }
+
+  async toggleProgramMessageReaction(
+    programId: string,
+    messageId: string,
+    emoji: MessageReactionEmoji,
+    actorId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<MessageReactionSnapshot | null> {
+    if (!isMessageReactionEmoji(emoji)) {
+      throw new RepositoryError("VALIDATION", "허용되지 않은 반응입니다.");
+    }
+    const program = this.state.programs.find(
+      (candidate) => candidate.id === programId,
+    );
+    const message = this.state.messages.find(
+      (candidate) =>
+        candidate.id === messageId && candidate.programId === programId,
+    );
+    if (!program || !message) {
+      throw new RepositoryError("NOT_FOUND", "메시지를 찾을 수 없습니다.");
+    }
+    if (message.isHidden) {
+      throw new RepositoryError("NOT_FOUND", "메시지를 찾을 수 없습니다.");
+    }
+    const actor = this.state.users.find((candidate) => candidate.id === actorId) ?? null;
+    if (!actor) {
+      throw new RepositoryError("UNAUTHORIZED", "로그인이 필요합니다.");
+    }
+    const participation =
+      this.state.participations.find(
+        (candidate) =>
+          candidate.programId === programId && candidate.userId === actorId,
+      ) ?? null;
+    const approval =
+      this.state.approvals.find((candidate) => candidate.programId === programId) ?? null;
+    const record =
+      this.state.records.find((candidate) => candidate.programId === programId) ?? null;
+    const confirmed = this.state.participations.filter(
+      (candidate) =>
+        candidate.programId === programId && candidate.status === "CONFIRMED",
+    ).length;
+    if (!canReactToProgramMessage({
+      user: actor,
+      program,
+      participation,
+      approval,
+      record,
+      participantCounts: { confirmed },
+    })) {
+      throw new RepositoryError(
+        "FORBIDDEN",
+        "이 Program TALK에 반응을 남길 권한이 없습니다.",
+      );
+    }
+    const next = clone(this.state);
+    const existingIndex = next.messageReactions.findIndex(
+      (reaction) =>
+        reaction.messageId === messageId && reaction.userId === actorId,
+    );
+    const existing = existingIndex >= 0 ? next.messageReactions[existingIndex] : null;
+    if (existing?.emoji === emoji) {
+      next.messageReactions.splice(existingIndex, 1);
+      this.commit(next, false);
+      this.emitReactionChange(programId, messageId);
+      return null;
+    }
+
+    const reaction = existing
+      ? { ...existing, emoji, updatedAt: now }
+      : {
+          id: uniqueId("reaction"),
+          programId,
+          messageId,
+          userId: actorId,
+          emoji,
+          createdAt: now,
+          updatedAt: now,
+        };
+    if (existingIndex >= 0) next.messageReactions[existingIndex] = reaction;
+    else next.messageReactions.push(reaction);
+    this.commit(next, false);
+    this.emitReactionChange(programId, messageId);
+    return clone({
+      ...reaction,
+      user: {
+        id: actor.id,
+        name: actor.name,
+        imageUrl: actor.imageUrl,
+        seasons: [...(next.participatingSeasonsByUserId[actor.id] ?? [])],
+      },
+    });
+  }
+
   async getUserById(userId: string): Promise<User | null> {
     const user = this.state.users.find((candidate) => candidate.id === userId);
     return user ? clone(user) : null;
   }
 
   async listUsers(viewerId: string): Promise<User[]> {
-    const viewer = this.state.users.find((candidate) => candidate.id === viewerId) ?? null;
-    if (viewer?.status !== "ADMIN") {
-      throw new RepositoryError("FORBIDDEN", "Admin만 전체 Member 정보를 확인할 수 있습니다.");
-    }
+    requireAdmin(this.state, viewerId);
     return clone(this.state.users);
+  }
+
+  async listAdminPrograms(
+    viewerId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<ProgramSnapshot[]> {
+    requireAdmin(this.state, viewerId);
+    return clone(
+      [...this.state.programs]
+        .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt))
+        .map((program) =>
+          buildProgramSnapshot(
+            program,
+            this.state.users,
+            this.state.participations,
+            this.state.records,
+            now,
+          ),
+        ),
+    );
+  }
+
+  async listAdminMessages(viewerId: string): Promise<ProgramMessage[]> {
+    requireAdmin(this.state, viewerId);
+    return clone(
+      [...this.state.messages].sort(
+        (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+      ),
+    );
+  }
+
+  async listAdminMemberRegistrations(
+    viewerId: string,
+  ): Promise<AdminMemberRegistration[]> {
+    requireAdmin(this.state, viewerId);
+    const registrations = this.state.users.map((user) => ({
+      user,
+      participatingSeasons:
+        this.state.participatingSeasonsByUserId[user.id] ?? [],
+    }));
+    registrations.sort((left, right) => {
+      const leftPending = left.user.status === "PENDING" ? 0 : 1;
+      const rightPending = right.user.status === "PENDING" ? 0 : 1;
+      return (
+        leftPending - rightPending ||
+        left.user.name.localeCompare(right.user.name, "ko")
+      );
+    });
+    return clone(registrations);
+  }
+
+  async approvePendingMember(
+    userId: string,
+    adminId: string,
+    now: ISODateTime = new Date().toISOString(),
+  ): Promise<AdminMemberRegistration> {
+    requireAdmin(this.state, adminId);
+    void now;
+    const userIndex = this.state.users.findIndex((user) => user.id === userId);
+    if (userIndex < 0) {
+      throw new RepositoryError("NOT_FOUND", "승인할 Member를 찾을 수 없습니다.");
+    }
+    const target = this.state.users[userIndex];
+    if (target.status !== "PENDING") {
+      throw new RepositoryError(
+        "INVALID_TRANSITION",
+        "PENDING Member만 승인할 수 있습니다.",
+      );
+    }
+
+    const approvedUser: User = { ...target, status: "MEMBER" };
+    const next = clone(this.state);
+    next.users[userIndex] = approvedUser;
+    this.commit(next);
+    return clone({
+      user: approvedUser,
+      participatingSeasons:
+        next.participatingSeasonsByUserId[userId] ?? [],
+    });
+  }
+
+  async listAdminRecords(viewerId: string): Promise<ProgramRecord[]> {
+    requireAdmin(this.state, viewerId);
+    return clone(
+      [...this.state.records].sort(
+        (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+      ),
+    );
   }
 
   async listMemberDirectory(): Promise<MemberDirectoryEntry[]> {
@@ -1821,7 +2100,22 @@ export class BrowserMockRepository implements OARepository {
     );
   }
 
-  async listConfirmedParticipantUsers(programId: string): Promise<User[]> {
+  async listConfirmedParticipantUsers(
+    programId: string,
+    viewerId: string,
+  ): Promise<User[]> {
+    const program = this.state.programs.find(
+      (candidate) => candidate.id === programId,
+    );
+    if (!program) {
+      throw new RepositoryError("NOT_FOUND", "프로그램을 찾을 수 없습니다.");
+    }
+    if (!capabilitiesForState(this.state, program, viewerId).canAccessTalk) {
+      throw new RepositoryError(
+        "FORBIDDEN",
+        "참가자 명단을 확인할 권한이 없습니다.",
+      );
+    }
     const confirmedUserIds = new Set(
       this.state.participations
         .filter((item) => item.programId === programId && item.status === "CONFIRMED")
@@ -1842,11 +2136,17 @@ export class BrowserMockRepository implements OARepository {
     }
   }
 
-  private commit(next: MockRepositoryState): void {
+  private commit(next: MockRepositoryState, notify = true): void {
     next.revision = this.state.revision + 1;
     this.state = deepFreeze(next);
     this.persist();
-    this.emit();
+    if (notify) this.emit();
+  }
+
+  private emitReactionChange(programId: string, messageId: string): void {
+    for (const listener of this.reactionListeners.get(programId) ?? []) {
+      listener(messageId);
+    }
   }
 
   private persist(): void {

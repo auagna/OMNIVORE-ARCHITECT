@@ -58,6 +58,7 @@ describe("v3.2 release UI hardening", () => {
     expect(wordmark).toContain("pointer: fine");
     expect(wordmark).toContain("IntersectionObserver");
     expect(wordmark).toContain('aria-label="OMNIVORE ARCHITECT"');
+    expect(wordmark).not.toContain("OMNIVORE_");
     expect(wordmark).toContain('canvas aria-hidden="true"');
     expect(wordmark).toContain("cancelAnimationFrame");
     expect(calendar).not.toContain('data-motion-cell="true"');

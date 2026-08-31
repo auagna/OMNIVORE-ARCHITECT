@@ -74,10 +74,10 @@ describe("approval model", () => {
     ]);
   });
 
-  it("seeds schema v4 with one approval per Program and public PageContent", () => {
+  it("seeds schema v5 with one approval per Program and public PageContent", () => {
     const state = createMockRepositoryState();
 
-    expect(state.schemaVersion).toBe(4);
+    expect(state.schemaVersion).toBe(5);
     expect(state.approvals).toHaveLength(state.programs.length);
     expect(state.pageContents.map((content) => content.key)).toEqual(PAGE_CONTENT_KEYS);
   });

@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { ConfirmationDialog, LockedState } from "@/components/feedback";
 import { OAMiniLogo } from "@/components/oa-mini-logo";
 import { useAppState, useRepositoryQuery } from "@/features/app-state/app-state-provider";
 import { AddToCalendar } from "@/features/programs/components/add-to-calendar";
+import {
+  canReactToProgramMessage,
+  MessageReactionBar,
+  useMessageLongPress,
+  type MessageReactionEmoji,
+  type MessageReactionSnapshot,
+  type MessageReactionUser,
+} from "@/features/conversation/reactions";
 import {
   getProgramCapabilities,
   getProgramDetailTabs,
@@ -45,6 +53,7 @@ interface DetailData {
   viewer: User | null;
   people: MemberDirectoryEntry[];
   messages: ProgramMessage[];
+  reactions: MessageReactionSnapshot[];
 }
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -135,17 +144,113 @@ function ProgramInformation({
   );
 }
 
+const ProgramTalkMessage = memo(function ProgramTalkMessage({
+  message,
+  authorName,
+  capabilities,
+  currentUser,
+  reactions,
+  onToggleReaction,
+  onReactionSettled,
+  onReactionError,
+  onReply,
+}: {
+  message: ProgramMessage;
+  authorName: string;
+  capabilities: ProgramCapabilities;
+  currentUser: MessageReactionUser;
+  reactions: readonly MessageReactionSnapshot[];
+  onToggleReaction: (
+    messageId: string,
+    emoji: MessageReactionEmoji,
+  ) => Promise<MessageReactionSnapshot | null>;
+  onReactionSettled: (
+    messageId: string,
+    userId: string,
+    reaction: MessageReactionSnapshot | null,
+  ) => void;
+  onReactionError: (message: string | null) => void;
+  onReply: (messageId: string) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canReact = canReactToProgramMessage(capabilities, message);
+  const longPress = useMessageLongPress({
+    enabled: canReact,
+    onLongPress: () => setPickerOpen(true),
+  });
+
+  return (
+    <article
+      className="oa-talk-message"
+      data-pinned={message.type === "NOTICE" && message.isPinned}
+      data-reply={message.parentId !== null}
+      data-reaction-open={pickerOpen || undefined}
+      id={`message-${message.id}`}
+      tabIndex={-1}
+      {...longPress}
+    >
+      <div className="oa-talk-message__meta">
+        <span>{message.isPinned ? "PINNED " : ""}{message.type}</span>
+        <span>{authorName}</span>
+        <time dateTime={message.createdAt}>
+          {new Intl.DateTimeFormat("ko-KR", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }).format(new Date(message.createdAt))}
+        </time>
+      </div>
+      <p>{message.content}</p>
+      <MessageReactionBar
+        messageId={message.id}
+        authorName={authorName}
+        currentUser={currentUser}
+        reactions={reactions}
+        canReact={canReact}
+        pickerOpen={pickerOpen}
+        onPickerOpenChange={setPickerOpen}
+        onToggle={onToggleReaction}
+        onSettled={onReactionSettled}
+        onError={onReactionError}
+      />
+      {capabilities.canWriteQuestion && message.type === "QUESTION" ? (
+        <button className="oa-talk-reply" type="button" onClick={() => onReply(message.id)}>
+          REPLY →
+        </button>
+      ) : null}
+    </article>
+  );
+});
+
+function groupReactionsByMessage(
+  reactions: readonly MessageReactionSnapshot[],
+): Record<string, MessageReactionSnapshot[]> {
+  return reactions.reduce<Record<string, MessageReactionSnapshot[]>>(
+    (groups, reaction) => {
+      (groups[reaction.messageId] ??= []).push(reaction);
+      return groups;
+    },
+    {},
+  );
+}
+
 function TalkPanel({
   capabilities,
   program,
   messages,
+  reactions,
   authors,
+  currentUser,
+  repository,
   onPost,
 }: {
   capabilities: ProgramCapabilities;
   program: Program;
   messages: ProgramMessage[];
+  reactions: MessageReactionSnapshot[];
   authors: MemberDirectoryEntry[];
+  currentUser: MessageReactionUser;
+  repository: OARepository;
   onPost: (input: CreateProgramMessageInput) => Promise<void>;
 }) {
   const [messageType, setMessageType] = useState<CreateProgramMessageInput["type"]>("CHAT");
@@ -154,16 +259,43 @@ function TalkPanel({
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
+  const [reactionError, setReactionError] = useState<string | null>(null);
+  const baseReactionsByMessage = useMemo(
+    () => groupReactionsByMessage(reactions),
+    [reactions],
+  );
+  const [reactionOverrides, setReactionOverrides] = useState<
+    Record<string, MessageReactionSnapshot[]>
+  >({});
+  const reactionsByMessage = useMemo(
+    () => ({ ...baseReactionsByMessage, ...reactionOverrides }),
+    [baseReactionsByMessage, reactionOverrides],
+  );
 
-  if (!capabilities.canAccessTalk) {
-    return (
-      <LockedState
-        title="PARTICIPANTS ONLY"
-        description={"이 대화방은 참가자와 운영진만\n이용할 수 있습니다."}
-        action={program.type === "GATHERING" && capabilities.canJoin ? <Link className="oa-label" href={`/program/${program.id}?tab=info#join`}>JOIN GATHERING →</Link> : null}
-      />
-    );
-  }
+  useEffect(() => {
+    if (!capabilities.canAccessTalk) return;
+    let active = true;
+    const unsubscribe = repository.watchProgramMessages(program.id, (messageId) => {
+      void repository
+        .listProgramMessageReactions(program.id, currentUser.id, [messageId])
+        .then((next) => {
+          if (!active) return;
+          setReactionOverrides((current) => ({
+            ...current,
+            [messageId]: next,
+          }));
+        })
+        .catch(() => {
+          if (active) {
+            setReactionError("반응을 새로 고치지 못했습니다. 연결 상태를 확인해 주세요.");
+          }
+        });
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [capabilities.canAccessTalk, currentUser.id, program.id, repository]);
 
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -195,6 +327,48 @@ function TalkPanel({
   const replyTarget = replyTo
     ? messages.find((message) => message.id === replyTo) ?? null
     : null;
+  const toggleReaction = useCallback(
+    (messageId: string, emoji: MessageReactionEmoji) =>
+      repository.toggleProgramMessageReaction(
+        program.id,
+        messageId,
+        emoji,
+        currentUser.id,
+        new Date().toISOString(),
+      ),
+    [currentUser.id, program.id, repository],
+  );
+  const settleReaction = useCallback((
+    messageId: string,
+    userId: string,
+    reaction: MessageReactionSnapshot | null,
+  ) => {
+    setReactionOverrides((current) => {
+      const withoutUser = (
+        current[messageId] ?? baseReactionsByMessage[messageId] ?? []
+      ).filter(
+        (candidate) => candidate.userId !== userId,
+      );
+      return {
+        ...current,
+        [messageId]: reaction ? [...withoutUser, reaction] : withoutUser,
+      };
+    });
+  }, [baseReactionsByMessage]);
+  const selectReply = useCallback((messageId: string) => setReplyTo(messageId), []);
+  const reportReactionError = useCallback((message: string | null) => {
+    setReactionError(message);
+  }, []);
+
+  if (!capabilities.canAccessTalk) {
+    return (
+      <LockedState
+        title="PARTICIPANTS ONLY"
+        description={"이 대화방은 참가자와 운영진만\n이용할 수 있습니다."}
+        action={program.type === "GATHERING" && capabilities.canJoin ? <Link className="oa-label" href={`/program/${program.id}?tab=info#join`}>JOIN GATHERING →</Link> : null}
+      />
+    );
+  }
 
   return (
     <section className="oa-talk" aria-labelledby="program-talk-heading">
@@ -204,38 +378,29 @@ function TalkPanel({
       </div>
 
       {messages.length ? (
-        <div className="oa-talk-list" aria-live="polite">
+        <div className="oa-talk-list">
           {messages.map((message) => (
-            <article
-              className="oa-talk-message"
-              data-pinned={message.type === "NOTICE" && message.isPinned}
-              data-reply={message.parentId !== null}
-              id={`message-${message.id}`}
+            <ProgramTalkMessage
               key={message.id}
-            >
-              <div className="oa-talk-message__meta">
-                <span>{message.isPinned ? "PINNED " : ""}{message.type}</span>
-                <span>{authorNames.get(message.authorId) ?? "MEMBER"}</span>
-                <time dateTime={message.createdAt}>
-                  {new Intl.DateTimeFormat("ko-KR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: false,
-                  }).format(new Date(message.createdAt))}
-                </time>
-              </div>
-              <p>{message.content}</p>
-              {capabilities.canWriteQuestion && message.type === "QUESTION" ? (
-                <button className="oa-talk-reply" type="button" onClick={() => setReplyTo(message.id)}>
-                  REPLY →
-                </button>
-              ) : null}
-            </article>
+              message={message}
+              authorName={authorNames.get(message.authorId) ?? "MEMBER"}
+              capabilities={capabilities}
+              currentUser={currentUser}
+              reactions={reactionsByMessage[message.id] ?? []}
+              onToggleReaction={toggleReaction}
+              onReactionSettled={settleReaction}
+              onReactionError={reportReactionError}
+              onReply={selectReply}
+            />
           ))}
         </div>
       ) : (
         <p className="oa-empty">아직 대화가 없습니다. Program 운영에 필요한 내용부터 남겨 주세요.</p>
       )}
+
+      <p className="oa-visually-hidden" role="status" aria-live="polite">
+        {reactionError ?? ""}
+      </p>
 
       {capabilities.canWriteChat ? (
         <form className="oa-talk-composer" onSubmit={submitMessage} noValidate>
@@ -394,13 +559,12 @@ export default function ProgramDetailPage() {
 
   const query = useCallback(async (repo: OARepository): Promise<DetailData> => {
     const requestedAt = new Date().toISOString();
-    const [snapshot, recordSnapshot, participation, approval, viewer, people] = await Promise.all([
+    const [snapshot, recordSnapshot, participation, approval, viewer] = await Promise.all([
       repo.getProgramSnapshotById(programId, requestedAt, currentUserId),
       repo.getRecordSnapshotByProgramId(programId),
       currentUserId ? repo.getParticipation(programId, currentUserId) : Promise.resolve(null),
       currentUserId ? repo.getProgramApproval(programId, currentUserId) : Promise.resolve(null),
       currentUserId ? repo.getUserById(currentUserId) : Promise.resolve(null),
-      repo.listConfirmedParticipantUsers(programId),
     ]);
     const canReadTalk = snapshot
       ? getProgramCapabilities({
@@ -413,9 +577,13 @@ export default function ProgramDetailPage() {
           now: requestedAt,
         }).canAccessTalk
       : false;
-    const messages = canReadTalk && currentUserId
-      ? await repo.listProgramMessages(programId, currentUserId)
-      : [];
+    const [messages, people, reactions] = canReadTalk && currentUserId
+      ? await Promise.all([
+          repo.listProgramMessages(programId, currentUserId),
+          repo.listConfirmedParticipantUsers(programId, currentUserId),
+          repo.listProgramMessageReactions(programId, currentUserId),
+        ])
+      : [[], [], []];
     return {
       snapshot,
       recordSnapshot,
@@ -424,6 +592,7 @@ export default function ProgramDetailPage() {
       viewer,
       people,
       messages,
+      reactions,
     };
   }, [currentUserId, programId]);
   const { data, loading, error, reload } = useRepositoryQuery(query, [currentUserId, programId]);
@@ -453,6 +622,19 @@ export default function ProgramDetailPage() {
     : ["info", "talk", "people"];
   const requestedTab = searchParams.get("tab") as DetailTab | null;
   const tab = requestedTab && tabs.includes(requestedTab) ? requestedTab : "info";
+  const targetMessageId = searchParams.get("message");
+
+  useEffect(() => {
+    if (tab !== "talk" || !targetMessageId || loading) return;
+    const target = document.getElementById(`message-${targetMessageId}`);
+    if (!target) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({
+      block: "center",
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+    target.focus({ preventScroll: true });
+  }, [loading, tab, targetMessageId]);
 
   if (loading || sessionLoading) return <main className="oa-page"><QueryLoading /></main>;
   if (error) return <main className="oa-page"><QueryError message={error.message} onRetry={reload} /></main>;
@@ -625,14 +807,23 @@ export default function ProgramDetailPage() {
       {tab === "info" ? <ProgramInformation snapshot={snapshot} capabilities={capabilities} /> : null}
       {tab === "talk" ? (
         <TalkPanel
+          key={program.id}
           capabilities={capabilities}
           program={program}
           messages={data.messages}
+          reactions={data.reactions}
           authors={[
             ...data.people,
             ...(snapshot.host ? [snapshot.host] : []),
             ...(viewer ? [viewer] : []),
           ]}
+          currentUser={{
+            id: viewer?.id ?? "anonymous",
+            name: viewer?.name ?? "MEMBER",
+            imageUrl: viewer?.imageUrl ?? null,
+            seasons: [],
+          }}
+          repository={repository}
           onPost={postMessage}
         />
       ) : null}

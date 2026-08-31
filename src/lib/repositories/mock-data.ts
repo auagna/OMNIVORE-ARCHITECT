@@ -1,10 +1,12 @@
 import { MOCK_CURRENT_USER_ID, MOCK_SCHEMA_VERSION } from "../../constants";
+import type { MessageReaction } from "../../features/conversation/reactions";
 import type {
   PageContent,
   Participation,
   PaymentStatus,
   Program,
   ProgramApproval,
+  ProgramMessage,
   ProgramRecord,
   User,
 } from "../../types";
@@ -16,6 +18,8 @@ export const MOCK_PROGRAM_IDS = {
   workshop: "program-gathering-029",
   reading: "program-reading-030",
 } as const;
+
+export const MOCK_PENDING_USER_ID = "user-pending";
 
 const MEMBER_IDS = [
   "user-member-1",
@@ -75,7 +79,23 @@ export function createMockRepositoryState(): MockRepositoryState {
     user(MEMBER_IDS[3], "임수아", "MEMBER", "브랜드 디자이너"),
     user(MEMBER_IDS[4], "윤태경", "MEMBER", "연구자"),
     user(MEMBER_IDS[5], "최가은", "MEMBER", "에디터"),
+    user(MOCK_PENDING_USER_ID, "서지안", "PENDING", "건축학도"),
   ];
+
+  const participatingSeasonsByUserId: Record<string, string[]> = {
+    [MOCK_CURRENT_USER_ID]: ["3기"],
+    "user-admin": ["1기", "2기", "3기"],
+    "user-host-exhibition": ["2기", "3기"],
+    "user-host-workshop": ["3기"],
+    "user-host-reading": ["2기", "3기"],
+    [MEMBER_IDS[0]]: ["3기"],
+    [MEMBER_IDS[1]]: ["3기"],
+    [MEMBER_IDS[2]]: ["2기", "3기"],
+    [MEMBER_IDS[3]]: ["3기"],
+    [MEMBER_IDS[4]]: ["1기", "2기", "3기"],
+    [MEMBER_IDS[5]]: ["2기"],
+    [MOCK_PENDING_USER_ID]: ["3기"],
+  };
 
   const programs: Program[] = [
     {
@@ -287,6 +307,141 @@ export function createMockRepositoryState(): MockRepositoryState {
     },
   ];
 
+  const messages: ProgramMessage[] = [
+    {
+      id: "message-exhibition-notice",
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      authorId: "user-host-exhibition",
+      type: "NOTICE",
+      content: "집결 장소는 리움미술관 지상 1층 안내 데스크 앞입니다.",
+      parentId: null,
+      isPinned: true,
+      isHidden: false,
+      createdAt: "2026-08-08T01:00:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-exhibition-question",
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      authorId: MEMBER_IDS[0],
+      type: "QUESTION",
+      content: "전시 티켓은 각자 미리 예매하면 될까요?",
+      parentId: null,
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T02:00:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-exhibition-reply",
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      authorId: "user-host-exhibition",
+      type: "CHAT",
+      content: "네, 14시 입장 회차로 개별 예매해 주세요.",
+      parentId: "message-exhibition-question",
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T02:20:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-exhibition-chat",
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      authorId: MEMBER_IDS[1],
+      type: "CHAT",
+      content: "저는 지하철로 이동해서 로비에서 바로 합류하겠습니다.",
+      parentId: null,
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T03:00:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-reading-notice",
+      programId: MOCK_PROGRAM_IDS.reading,
+      authorId: "user-host-reading",
+      type: "NOTICE",
+      content: "이번 주 읽기 범위는 42쪽부터 87쪽까지입니다.",
+      parentId: null,
+      isPinned: true,
+      isHidden: false,
+      createdAt: "2026-08-08T05:00:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-reading-question",
+      programId: MOCK_PROGRAM_IDS.reading,
+      authorId: MEMBER_IDS[2],
+      type: "QUESTION",
+      content: "토론에서 참고할 사례를 하나씩 준비하면 될까요?",
+      parentId: null,
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T05:30:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-reading-reply",
+      programId: MOCK_PROGRAM_IDS.reading,
+      authorId: "user-host-reading",
+      type: "CHAT",
+      content: "좋습니다. 공간이 아닌 실천 사례도 환영합니다.",
+      parentId: "message-reading-question",
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T06:00:00.000Z",
+      editedAt: null,
+    },
+    {
+      id: "message-reading-chat",
+      programId: MOCK_PROGRAM_IDS.reading,
+      authorId: MEMBER_IDS[3],
+      type: "CHAT",
+      content: "저는 공공 프로젝트 사례를 가져가겠습니다.",
+      parentId: null,
+      isPinned: false,
+      isHidden: false,
+      createdAt: "2026-08-08T06:30:00.000Z",
+      editedAt: null,
+    },
+  ];
+
+  const messageReactions: MessageReaction[] = [
+    ...[
+      [MEMBER_IDS[0], "❤️"],
+      [MEMBER_IDS[1], "❤️"],
+      [MEMBER_IDS[2], "❤️"],
+      [MEMBER_IDS[3], "👍"],
+      ["user-host-exhibition", "👍"],
+    ].map(([userId, emoji], index) => ({
+      id: `reaction-exhibition-question-${index + 1}`,
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      messageId: "message-exhibition-question",
+      userId,
+      emoji: emoji as MessageReaction["emoji"],
+      createdAt: `2026-08-08T02:${String(index + 1).padStart(2, "0")}:00.000Z`,
+      updatedAt: `2026-08-08T02:${String(index + 1).padStart(2, "0")}:00.000Z`,
+    })),
+    ...MEMBER_IDS.slice(0, 4).map((userId, index) => ({
+      id: `reaction-exhibition-reply-${index + 1}`,
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      messageId: "message-exhibition-reply",
+      userId,
+      emoji: "✅" as const,
+      createdAt: `2026-08-08T02:${String(30 + index).padStart(2, "0")}:00.000Z`,
+      updatedAt: `2026-08-08T02:${String(30 + index).padStart(2, "0")}:00.000Z`,
+    })),
+    ...MEMBER_IDS.slice(0, 2).map((userId, index) => ({
+      id: `reaction-exhibition-notice-${index + 1}`,
+      programId: MOCK_PROGRAM_IDS.exhibition,
+      messageId: "message-exhibition-notice",
+      userId,
+      emoji: "👏" as const,
+      createdAt: `2026-08-08T01:${String(index + 1).padStart(2, "0")}:00.000Z`,
+      updatedAt: `2026-08-08T01:${String(index + 1).padStart(2, "0")}:00.000Z`,
+    })),
+  ];
+
   const pageContents: PageContent[] = [
     {
       id: "page-content-home",
@@ -371,7 +526,9 @@ export function createMockRepositoryState(): MockRepositoryState {
     records,
     recordMaterials: [],
     activities: [],
-    messages: [],
+    messages,
+    messageReactions,
+    participatingSeasonsByUserId,
     pageContents,
   };
 }

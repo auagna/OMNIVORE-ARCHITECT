@@ -2,31 +2,19 @@
 
 import { useSearchParams } from "next/navigation";
 import { AdminApprovalQueue, AdminApprovalReview } from "./admin-approvals";
+import { AdminConversations } from "./admin-conversations";
 import { AdminContentEditor, isPageContentKey } from "./admin-content";
+import { AdminMembers } from "./admin-members";
 import { AdminOverview } from "./admin-overview";
+import { AdminPrograms } from "./admin-programs";
+import { AdminRecords } from "./admin-records";
 import { AdminShell, isAdminView, type AdminView } from "./admin-shell";
 import { AdminPageHeader, AdminState } from "./admin-ui";
 
-const TASK_STATES: Record<Exclude<AdminView, "overview" | "approvals" | "content">, { title: string; description: string }> = {
-  programs: {
-    title: "PROGRAM OPERATIONS",
-    description: "Program 상태 변경과 편집은 각 Program의 Hosting 화면에서 진행합니다.",
-  },
-  members: {
-    title: "MEMBER APPROVAL",
-    description: "현재 배포에는 Member 승인 데이터 adapter가 연결되어 있지 않습니다.",
-  },
+const TASK_STATES: Record<"seasons", { title: string; description: string }> = {
   seasons: {
     title: "SEASON MANAGEMENT",
-    description: "현재 배포에는 Season 관리 데이터 adapter가 연결되어 있지 않습니다.",
-  },
-  records: {
-    title: "RECORD STATUS",
-    description: "Record Required는 Home, My와 각 Program Detail에서 확인합니다.",
-  },
-  conversations: {
-    title: "CONVERSATION MODERATION",
-    description: "운영 대화는 각 Program에 종속된 TALK에서 확인합니다.",
+    description: "Season 전환은 Admin-only 원자적 adapter를 연결하는 다음 작업입니다.",
   },
 };
 
@@ -55,6 +43,14 @@ export default function AdminPage() {
     content = programId ? <AdminApprovalReview programId={programId} /> : <AdminApprovalQueue />;
   } else if (activeView === "content") {
     content = <AdminContentEditor selectedKey={contentKey} />;
+  } else if (activeView === "programs") {
+    content = <AdminPrograms />;
+  } else if (activeView === "members") {
+    content = <AdminMembers />;
+  } else if (activeView === "records") {
+    content = <AdminRecords />;
+  } else if (activeView === "conversations") {
+    content = <AdminConversations />;
   } else {
     content = <AdminTaskPlaceholder view={activeView} />;
   }

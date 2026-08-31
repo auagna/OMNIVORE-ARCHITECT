@@ -25,6 +25,7 @@ export interface ProgramCapabilities {
   canWriteChat: boolean;
   canWriteQuestion: boolean;
   canWriteNotice: boolean;
+  canReactToMessage: boolean;
   canEditProgram: boolean;
   canCloseRecruitment: boolean;
   canCancelProgram: boolean;
@@ -122,6 +123,7 @@ export function getProgramCapabilities({
     canWriteChat: canWriteTalk && talkMember,
     canWriteQuestion: canWriteTalk && talkMember,
     canWriteNotice: canWriteTalk && (admin || host),
+    canReactToMessage: canWriteTalk && talkMember,
     canEditProgram,
     canCloseRecruitment:
       manager &&

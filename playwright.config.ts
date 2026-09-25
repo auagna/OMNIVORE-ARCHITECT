@@ -67,6 +67,9 @@ export default defineConfig({
         webServer: {
           command: "npm run dev -- --hostname 127.0.0.1 --port 3107",
           url: localBaseUrl,
+          env: {
+            NEXT_PUBLIC_OA_TEST_NOW: "2026-08-08T00:00:00.000Z",
+          },
           reuseExistingServer: false,
           timeout: 120_000,
         },

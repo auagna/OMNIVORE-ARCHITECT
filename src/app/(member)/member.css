@@ -672,7 +672,7 @@ p.oa-empty { max-width: none; margin-block: 0; color: var(--oa-secondary); line-
 }
 
 @media (max-width: 759px) {
-  .oa-reaction-picker { top: auto !important; right: var(--oa-page-gutter); bottom: calc(var(--oa-nav-height) + env(safe-area-inset-bottom) + 12px); left: var(--oa-page-gutter) !important; grid-template-columns: repeat(6, minmax(44px, 1fr)); width: auto; }
+  .oa-reaction-picker { position: fixed; top: auto !important; right: var(--oa-page-gutter); bottom: calc(var(--oa-nav-height) + env(safe-area-inset-bottom) + 12px); left: var(--oa-page-gutter) !important; grid-template-columns: repeat(6, minmax(44px, 1fr)); width: auto; }
   .oa-reaction-picker > button { width: 100%; }
   .oa-reaction-users { width: 100%; max-width: none; max-height: min(72dvh, 680px); margin: auto 0 0; padding: 26px var(--oa-page-gutter) calc(24px + env(safe-area-inset-bottom)); border-width: 1px 0 0; transform: translateY(100%); }
   .oa-reaction-users[open] { transform: translateY(0); }

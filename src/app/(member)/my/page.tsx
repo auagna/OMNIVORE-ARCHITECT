@@ -8,6 +8,7 @@ import { useAppState, useRepositoryQuery } from "@/features/app-state/app-state-
 import { getProgramCapabilities } from "@/features/programs/domain";
 import { ProgramEditorialList } from "@/features/programs/views/program-editorial-link";
 import { QueryEmpty, QueryError, QueryLoading } from "@/features/programs/views/query-state";
+import { currentTimestamp } from "@/lib/current-time";
 import type { OARepository } from "@/lib/repositories";
 
 export default function MyPage() {
@@ -15,7 +16,7 @@ export default function MyPage() {
   const { currentUserId, sessionLoading } = useAppState();
   const query = useCallback(async (repo: OARepository) => {
     if (!currentUserId) return { upcoming: [], hosting: [], proposals: [], user: null };
-    const now = new Date().toISOString();
+    const now = currentTimestamp();
     const [upcoming, hosting, proposals, user] = await Promise.all([
       repo.listMyUpcoming(currentUserId, now),
       repo.listHostedPrograms(currentUserId, now),

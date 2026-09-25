@@ -15,12 +15,15 @@ import {
   type MessageReactionSnapshot,
   type MessageReactionUser,
 } from "@/features/conversation/reactions";
+import { ProgramTalkMessageFrame } from "@/features/conversation/components/program-talk-message-frame";
 import {
   getProgramCapabilities,
   getProgramDetailTabs,
   type ProgramCapabilities,
 } from "@/features/programs/domain";
+import { ProgramDetailHero } from "@/features/programs/components/program-detail-hero";
 import { QueryError, QueryLoading } from "@/features/programs/views/query-state";
+import { currentTimestamp } from "@/lib/current-time";
 import {
   formatCost,
   formatLongDate,
@@ -180,27 +183,12 @@ const ProgramTalkMessage = memo(function ProgramTalkMessage({
   });
 
   return (
-    <article
-      className="oa-talk-message"
-      data-pinned={message.type === "NOTICE" && message.isPinned}
-      data-reply={message.parentId !== null}
-      data-reaction-open={pickerOpen || undefined}
-      id={`message-${message.id}`}
-      tabIndex={-1}
+    <ProgramTalkMessageFrame
+      message={message}
+      authorName={authorName}
+      reactionOpen={pickerOpen}
       {...longPress}
     >
-      <div className="oa-talk-message__meta">
-        <span>{message.isPinned ? "PINNED " : ""}{message.type}</span>
-        <span>{authorName}</span>
-        <time dateTime={message.createdAt}>
-          {new Intl.DateTimeFormat("ko-KR", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          }).format(new Date(message.createdAt))}
-        </time>
-      </div>
-      <p>{message.content}</p>
       <MessageReactionBar
         messageId={message.id}
         authorName={authorName}
@@ -218,7 +206,7 @@ const ProgramTalkMessage = memo(function ProgramTalkMessage({
           REPLY →
         </button>
       ) : null}
-    </article>
+    </ProgramTalkMessageFrame>
   );
 });
 
@@ -558,7 +546,7 @@ export default function ProgramDetailPage() {
   const programId = params.programId;
 
   const query = useCallback(async (repo: OARepository): Promise<DetailData> => {
-    const requestedAt = new Date().toISOString();
+    const requestedAt = currentTimestamp();
     const [snapshot, recordSnapshot, participation, approval, viewer] = await Promise.all([
       repo.getProgramSnapshotById(programId, requestedAt, currentUserId),
       repo.getRecordSnapshotByProgramId(programId),
@@ -607,6 +595,7 @@ export default function ProgramDetailPage() {
       approval: data.approval,
       record: data.snapshot.record,
       participantCounts: data.snapshot.participantCounts,
+      now: currentTimestamp(),
     }).canAccessTalk,
   );
 
@@ -660,6 +649,7 @@ export default function ProgramDetailPage() {
     approval,
     record: snapshot.record,
     participantCounts: snapshot.participantCounts,
+    now: currentTimestamp(),
   });
 
   async function join() {
@@ -667,7 +657,7 @@ export default function ProgramDetailPage() {
     setJoining(true);
     setJoinError(null);
     try {
-      const outcome = await repository.joinProgram(program.id, currentUserId, new Date().toISOString());
+      const outcome = await repository.joinProgram(program.id, currentUserId, currentTimestamp());
       router.push(`/my?joined=${program.id}&status=${outcome.placement.toLowerCase()}`);
     } catch (reason) {
       setJoinError(reason instanceof Error ? reason.message : "참여 신청을 완료하지 못했습니다.");
@@ -777,17 +767,10 @@ export default function ProgramDetailPage() {
 
   return (
     <main className="oa-page oa-page--narrow">
-      <div className="oa-detail-code">
-        <span className="oa-overline">{formatProgramKind(program)}</span>
-        <span className="oa-overline">{program.code}</span>
-      </div>
-      <h1 className="oa-page-title oa-page-title--detail oa-detail-title-reveal">{program.title}</h1>
-      <p className="oa-detail-date">
-        {formatLongDate(program.startAt)}
-        <span>{formatTimeRange(program.startAt, program.endAt)}</span>
-      </p>
-      <p className="oa-status">{snapshot.displayStatus.replaceAll("_", " ")}</p>
-      {participation ? <p className="oa-meta oa-muted">PARTICIPATION / {participation.status}</p> : null}
+      <ProgramDetailHero
+        snapshot={snapshot}
+        participationStatus={participation?.status}
+      />
       <div className="oa-detail-secondary-action">
         <AddToCalendar program={program} />
       </div>

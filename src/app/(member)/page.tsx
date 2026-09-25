@@ -6,11 +6,10 @@ import { OAParticleWordmark } from "@/components/ui";
 import { useAppState, useRepositoryQuery } from "@/features/app-state/app-state-provider";
 import { ProgramEditorialLink } from "@/features/programs/views/program-editorial-link";
 import { QueryEmpty, QueryError, QueryLoading } from "@/features/programs/views/query-state";
+import { currentDate, currentTimestamp } from "@/lib/current-time";
 import { formatShortDate } from "@/lib/format";
 import type { OARepository } from "@/lib/repositories";
 import type { HomeAction } from "@/types";
-
-const now = () => new Date().toISOString();
 
 function homeActionPresentation(action: HomeAction) {
   switch (action.type) {
@@ -39,16 +38,16 @@ export default function HomePage() {
   const { currentUserId } = useAppState();
   const query = useCallback(async (repository: OARepository) => {
     const [home, content, actions] = await Promise.all([
-      repository.getHomeData(now()),
+      repository.getHomeData(currentTimestamp()),
       repository.getPageContent("home"),
       currentUserId
-        ? repository.listMyActions(currentUserId, now())
+        ? repository.listMyActions(currentUserId, currentTimestamp())
         : Promise.resolve([]),
     ]);
     return { home, content, actions };
   }, [currentUserId]);
   const { data, loading, error, reload } = useRepositoryQuery(query, [currentUserId]);
-  const date = new Date();
+  const date = currentDate();
   const day = new Intl.DateTimeFormat("en-GB", { day: "2-digit", timeZone: "Asia/Seoul" }).format(date);
   const month = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "Asia/Seoul" }).format(date).toUpperCase();
   const year = new Intl.DateTimeFormat("en-GB", { year: "numeric", timeZone: "Asia/Seoul" }).format(date);
